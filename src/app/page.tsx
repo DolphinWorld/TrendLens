@@ -25,14 +25,65 @@ export default function HomePage() {
   const geoRef = useRef(geo);
   geoRef.current = geo;
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const loadDiscovery = useCallback(async (r: TimeRange, g: string = geoRef.current) => {
+    // Cancel any in-flight discovery request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setDiscoveryLoading(true);
+    setResults([]);
     try {
-      const res = await fetch(`/api/trends?discover=true&range=${r}&geo=${g}`);
-      const data = await res.json();
-      if (Array.isArray(data)) setResults(data);
-    } catch {
-      // user can search manually
+      const res = await fetch(
+        `/api/trends?discover=true&stream=true&range=${r}&geo=${g}`,
+        { signal: controller.signal }
+      );
+      if (!res.ok || !res.body) throw new Error("Stream failed");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const trend = JSON.parse(line);
+            if (trend.keyword) {
+              setResults((prev) =>
+                [...prev, trend].sort((a, b) => b.compositeScore - a.compositeScore)
+              );
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        try {
+          const trend = JSON.parse(buffer);
+          if (trend.keyword) {
+            setResults((prev) =>
+              [...prev, trend].sort((a, b) => b.compositeScore - a.compositeScore)
+            );
+          }
+        } catch {
+          // skip
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
     } finally {
       setDiscoveryLoading(false);
     }
@@ -55,6 +106,7 @@ export default function HomePage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSearch(keyword: string) {
+    if (abortRef.current) abortRef.current.abort();
     setLoading(true);
     setSearched(true);
     setLastKeyword(keyword);
@@ -185,7 +237,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {!searched && !discoveryLoading && results.length > 0 && (
+        {!searched && results.length > 0 && (
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium text-text-muted">
               Top Trends Right Now
@@ -214,10 +266,10 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Loading skeleton */}
+        {/* Loading skeleton — only when no results have arrived yet */}
         {(loading || discoveryLoading) && results.length === 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({ length: 10 }).map((_, i) => (
+            {Array.from({ length: 6 }).map((_, i) => (
               <div
                 key={i}
                 className="rounded-2xl border border-border bg-surface p-5 animate-pulse"
@@ -238,17 +290,38 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Results grid */}
+        {/* Results grid — cards stream in as they arrive */}
         {results.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.map((trend, i) => (
+            {results.map((trend) => (
               <div
                 key={trend.keyword}
-                className={`animate-fade-in animate-fade-in-delay-${Math.min(i, 4)}`}
+                className="animate-fade-in"
               >
                 <TrendCard trend={trend} />
               </div>
             ))}
+            {/* Placeholder skeletons for remaining cards still loading */}
+            {discoveryLoading && !searched && results.length < 10 &&
+              Array.from({ length: Math.min(3, 10 - results.length) }).map((_, i) => (
+                <div
+                  key={`skeleton-${i}`}
+                  className="rounded-2xl border border-border bg-surface p-5 animate-pulse"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="h-5 w-28 bg-surface-alt rounded" />
+                      <div className="h-4 w-16 bg-surface-alt rounded mt-2" />
+                    </div>
+                    <div className="w-14 h-14 rounded-full bg-surface-alt" />
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    <div className="h-3 w-full bg-surface-alt rounded" />
+                    <div className="h-3 w-3/4 bg-surface-alt rounded" />
+                  </div>
+                </div>
+              ))
+            }
           </div>
         )}
 

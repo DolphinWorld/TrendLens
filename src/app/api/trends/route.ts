@@ -1,27 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllTrends, fetchDailyTrends, fetchHotWordsWithRegions, fetchMastodonTrending, fetchAllGeoHotWords } from "@/lib/fetchers";
 import { getDiscoveryTopics } from "@/lib/trending-topics";
-import type { TrendResult, TimeRange } from "@/lib/types";
+import type { TimeRange } from "@/lib/types";
 
 const VALID_RANGES = new Set<string>(["1h", "6h", "1d", "7d", "30d", "90d", "12m"]);
-
-// Stagger requests to avoid rate limits
-async function fetchSequentialWithDelay(
-  topics: string[],
-  range: TimeRange,
-  delayMs = 2000,
-  geo = "US",
-  skipGoogle = false
-): Promise<TrendResult[]> {
-  const results: TrendResult[] = [];
-  for (const topic of topics) {
-    results.push(await fetchAllTrends(topic, range, false, geo, skipGoogle));
-    if (results.length < topics.length) {
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
-  return results;
-}
 
 export async function GET(req: NextRequest) {
   const keyword = req.nextUrl.searchParams.get("q");
@@ -35,7 +17,6 @@ export async function GET(req: NextRequest) {
     : "7d";
 
   try {
-    // Hot words endpoints
     if (hotwords === "true") {
       const allgeos = req.nextUrl.searchParams.get("allgeos");
       if (allgeos === "true") {
@@ -63,6 +44,8 @@ export async function GET(req: NextRequest) {
     }
 
     if (discover === "true") {
+      const stream = req.nextUrl.searchParams.get("stream") === "true";
+
       let topics: string[];
       try {
         const hotWords = await fetchDailyTrends(geoParam);
@@ -74,11 +57,48 @@ export async function GET(req: NextRequest) {
       } catch {
         topics = getDiscoveryTopics(10);
       }
-      // skipGoogle=true: hot words already come from Google Trends RSS,
-      // no need to re-query the API. This preserves rate limit budget for regions.
-      const results = await fetchSequentialWithDelay(topics, range, 1500, geoParam, true);
-      results.sort((a, b) => b.compositeScore - a.compositeScore);
-      return NextResponse.json(results);
+
+      if (stream) {
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+          async start(controller) {
+            try {
+              // Fire all topics in parallel — each streams its result as soon as it resolves
+              const promises = topics.map(async (topic) => {
+                try {
+                  const result = await fetchAllTrends(topic, range, false, geoParam, true);
+                  controller.enqueue(encoder.encode(JSON.stringify(result) + "\n"));
+                } catch {
+                  // skip failed topics
+                }
+              });
+              await Promise.all(promises);
+            } catch (err) {
+              console.error("Stream error:", err);
+            } finally {
+              controller.close();
+            }
+          },
+        });
+
+        return new Response(readable, {
+          headers: {
+            "Content-Type": "application/x-ndjson",
+            "Transfer-Encoding": "chunked",
+            "Cache-Control": "no-cache",
+          },
+        });
+      }
+
+      // Non-streaming fallback: fetch all in parallel (still much faster than sequential)
+      const results = await Promise.all(
+        topics.map((topic) =>
+          fetchAllTrends(topic, range, false, geoParam, true).catch(() => null)
+        )
+      );
+      const valid = results.filter(Boolean) as Awaited<ReturnType<typeof fetchAllTrends>>[];
+      valid.sort((a, b) => b.compositeScore - a.compositeScore);
+      return NextResponse.json(valid);
     }
 
     return NextResponse.json(

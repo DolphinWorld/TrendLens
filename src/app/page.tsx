@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { TrendResult, TimeRange, HotWord, StateKeywordMatrix, WorldHotWords } from "@/lib/types";
+import type { TrendResult, TimeRange, HotWord } from "@/lib/types";
 import { SearchBar } from "@/components/search-bar";
 import { TrendCard } from "@/components/trend-card";
-import { TrendMap } from "@/components/trend-map";
 import { TimeRangeSelector } from "@/components/time-range-selector";
 import { HeatMapCloud } from "@/components/heat-map-cloud";
 import { GeoSelector } from "@/components/geo-selector";
@@ -22,14 +21,6 @@ export default function HomePage() {
   // Hot words (progressive loading)
   const [hotWords, setHotWords] = useState<HotWord[]>([]);
   const [hotWordsLoading, setHotWordsLoading] = useState(true);
-
-  // Regional map data
-  const [stateMatrix, setStateMatrix] = useState<StateKeywordMatrix | null>(null);
-  const [matrixLoading, setMatrixLoading] = useState(false);
-
-  // World map data (all geos)
-  const [worldHotWords, setWorldHotWords] = useState<WorldHotWords | null>(null);
-  const [worldHotWordsLoading, setWorldHotWordsLoading] = useState(true);
 
   const geoRef = useRef(geo);
   geoRef.current = geo;
@@ -59,36 +50,9 @@ export default function HomePage() {
       .finally(() => setHotWordsLoading(false));
   }, [geo]);
 
-  // Load world hot words for global map (once, fast — all RSS in parallel)
-  useEffect(() => {
-    setWorldHotWordsLoading(true);
-    fetch("/api/trends?hotwords=true&allgeos=true")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data && typeof data === "object" && !Array.isArray(data)) {
-          setWorldHotWords(data as WorldHotWords);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setWorldHotWordsLoading(false));
-  }, []);
-
   useEffect(() => {
     loadDiscovery(range, geo);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Phase 2: Load regional map data after discovery finishes (3 hot words = 3 Google API calls)
-  useEffect(() => {
-    if (discoveryLoading || searched) return;
-    setMatrixLoading(true);
-    fetch(`/api/trends?hotwords=true&regions=true&geo=${geo}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.stateMatrix) setStateMatrix(data.stateMatrix);
-      })
-      .catch(() => {})
-      .finally(() => setMatrixLoading(false));
-  }, [discoveryLoading, searched, geo]);
 
   async function handleSearch(keyword: string) {
     setLoading(true);
@@ -111,7 +75,6 @@ export default function HomePage() {
     setSearched(false);
     setLastKeyword(null);
     setResults([]);
-    setStateMatrix(null);
     loadDiscovery(range, geo);
   }
 
@@ -272,20 +235,6 @@ export default function HomePage() {
                 </div>
               </div>
             ))}
-          </div>
-        )}
-
-        {/* Trend Map — world view in discovery, regional in search */}
-        {(results.length > 0 || matrixLoading || stateMatrix || worldHotWords || worldHotWordsLoading) && (
-          <div className="mb-6">
-            <TrendMap
-              trends={results}
-              stateMatrix={stateMatrix}
-              matrixLoading={matrixLoading}
-              geo={geo}
-              worldHotWords={searched ? null : worldHotWords}
-              worldHotWordsLoading={searched ? false : worldHotWordsLoading}
-            />
           </div>
         )}
 

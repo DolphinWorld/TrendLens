@@ -47,12 +47,6 @@ body {
 .animate-fade-in-delay-3 { animation-delay: 0.15s; }
 .animate-fade-in-delay-4 { animation-delay: 0.2s; }
 
-/* Leaflet overrides */
-.leaflet-container {
-  font-family: var(--font-sans);
-  z-index: 0;
-}
-
 .sparkline-path {
   stroke-dasharray: 1000;
   stroke-dashoffset: 1000;
@@ -63,16 +57,3 @@ body {
   to { stroke-dashoffset: 0; }
 }
 
-/* Persistent map labels */
-.map-label {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  white-space: nowrap;
-  pointer-events: none;
-}
-.map-label::before {
-  display: none !important;
-}

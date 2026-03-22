@@ -1,18 +1,15 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import type { TrendResult, AiInsight, TrendDataPoint } from "@/lib/types";
+import type { TrendResult, AiInsight, TrendDataPoint, SourceKey } from "@/lib/types";
+import { ALL_SOURCES } from "@/lib/types";
 import { ScoreRing } from "./score-ring";
 import { Sparkline } from "./sparkline";
 import { scoreColor } from "@/lib/score-color";
 
-const SOURCE_COLORS: Record<string, string> = {
-  google: "var(--color-accent)",
-  reddit: "var(--color-hot)",
-  hackernews: "var(--color-warm)",
-  wikipedia: "#3b82f6",
-  github: "#8b5cf6",
-};
+const SOURCE_COLORS: Record<string, string> = Object.fromEntries(
+  ALL_SOURCES.map((s) => [s.key, s.color])
+);
 
 const MOMENTUM_BADGE: Record<string, { label: string; cls: string }> = {
   rising: { label: "Rising", cls: "bg-rising-light text-rising" },
@@ -32,7 +29,7 @@ function combineSources(trend: TrendResult): TrendDataPoint[] {
     .map(([date, value]) => ({ date, value }));
 }
 
-export function TrendCard({ trend }: { trend: TrendResult }) {
+export function TrendCard({ trend, enabledSources }: { trend: TrendResult; enabledSources?: Set<SourceKey> }) {
   const [insight, setInsight] = useState<AiInsight | null>(null);
   const [loading, setLoading] = useState(false);
   const [insightExpanded, setInsightExpanded] = useState(false);
@@ -82,7 +79,7 @@ export function TrendCard({ trend }: { trend: TrendResult }) {
             {badge.label}
           </span>
         </div>
-        <ScoreRing score={trend.compositeScore} />
+        <ScoreRing score={trend.compositeScore} enabledSources={enabledSources} />
       </div>
 
       {/* Combined Sparkline */}

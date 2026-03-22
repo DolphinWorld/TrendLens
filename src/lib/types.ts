@@ -49,6 +49,16 @@ export interface TrendWithInsight extends TrendResult {
 
 export type TimeRange = "1h" | "6h" | "1d" | "7d" | "30d" | "90d" | "12m";
 
+export type SourceKey = "google" | "reddit" | "hackernews" | "wikipedia" | "github";
+
+export const ALL_SOURCES: { key: SourceKey; label: string; weight: number; color: string }[] = [
+  { key: "google",     label: "Google Trends", weight: 0.30, color: "var(--color-accent)" },
+  { key: "reddit",     label: "Reddit",        weight: 0.22, color: "var(--color-hot)" },
+  { key: "hackernews", label: "Hacker News",   weight: 0.18, color: "var(--color-warm)" },
+  { key: "wikipedia",  label: "Wikipedia",     weight: 0.15, color: "#3b82f6" },
+  { key: "github",     label: "GitHub",        weight: 0.15, color: "#8b5cf6" },
+];
+
 export interface HotWord {
   word: string;
   traffic: number;

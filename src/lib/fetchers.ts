@@ -1,4 +1,5 @@
-import type { SourceData, TrendDataPoint, RegionInterest, TimeRange, HotWord, StateKeywordMatrix, NewsArticle, WorldHotWords } from "./types";
+import type { SourceData, TrendDataPoint, RegionInterest, TimeRange, HotWord, StateKeywordMatrix, NewsArticle, WorldHotWords, SourceKey } from "./types";
+import { ALL_SOURCES } from "./types";
 import { SUPPORTED_GEOS } from "./geo-config";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const googleTrends = require("google-trends-api");
@@ -674,38 +675,44 @@ export async function fetchAllTrends(
   range: TimeRange = "7d",
   includeRegions = false,
   geo: string = "US",
-  skipGoogle = false
+  skipGoogle = false,
+  enabledSources?: SourceKey[]
 ) {
+  const enabled = new Set(enabledSources ?? ALL_SOURCES.map((s) => s.key));
+
   const fetchRegions: Promise<RegionInterest[]> = includeRegions
     ? fetchGoogleRegions(keyword, geo).catch((): RegionInterest[] => [])
     : Promise.resolve([] as RegionInterest[]);
 
-  const googlePromise: Promise<SourceData> = skipGoogle
-    ? Promise.resolve({ source: "google" as const, label: "Google Trends", score: 50, dataPoints: [] })
-    : fetchGoogleTrends(keyword, range, geo);
+  const fetcherMap: Record<SourceKey, () => Promise<SourceData>> = {
+    google: () =>
+      skipGoogle
+        ? Promise.resolve({ source: "google" as const, label: "Google Trends", score: 50, dataPoints: [] })
+        : fetchGoogleTrends(keyword, range, geo),
+    reddit: () => fetchRedditTrends(keyword, range),
+    hackernews: () => fetchHackerNewsTrends(keyword, range),
+    wikipedia: () => fetchWikipediaPageViews(keyword, range),
+    github: () => fetchGitHubTrends(keyword, range),
+  };
 
-  const [google, reddit, hn, wiki, github, regions, news] = await Promise.all([
-    googlePromise,
-    fetchRedditTrends(keyword, range),
-    fetchHackerNewsTrends(keyword, range),
-    fetchWikipediaPageViews(keyword, range),
-    fetchGitHubTrends(keyword, range),
+  const enabledKeys = ALL_SOURCES.filter((s) => enabled.has(s.key)).map((s) => s.key);
+  const [sourceResults, regions, news] = await Promise.all([
+    Promise.all(enabledKeys.map((key) => fetcherMap[key]())),
     fetchRegions,
     fetchGoogleNews(keyword, geo),
   ]);
 
-  const sources = [google, reddit, hn, wiki, github];
-
-  // Google 30%, Reddit 22%, HN 18%, Wikipedia 15%, GitHub 15%
+  // Dynamic weighted composite — normalize weights of enabled sources to sum to 1.0
+  const enabledConfigs = ALL_SOURCES.filter((s) => enabled.has(s.key));
+  const totalWeight = enabledConfigs.reduce((sum, s) => sum + s.weight, 0);
   const compositeScore = Math.round(
-    google.score * 0.3 +
-      reddit.score * 0.22 +
-      hn.score * 0.18 +
-      wiki.score * 0.15 +
-      github.score * 0.15
+    sourceResults.reduce((sum, result) => {
+      const config = enabledConfigs.find((c) => c.key === result.source)!;
+      return sum + result.score * (config.weight / totalWeight);
+    }, 0)
   );
 
-  const allPoints = sources.flatMap((s) => s.dataPoints);
+  const allPoints = sourceResults.flatMap((s) => s.dataPoints);
   let momentum: "rising" | "stable" | "declining" = "stable";
 
   if (allPoints.length >= 3) {
@@ -725,7 +732,7 @@ export async function fetchAllTrends(
     keyword,
     compositeScore: Math.min(100, compositeScore),
     momentum,
-    sources,
+    sources: sourceResults,
     regions,
     newsArticles: news,
     queriedAt: new Date().toISOString(),

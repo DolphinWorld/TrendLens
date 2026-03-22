@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { scoreColor } from "@/lib/score-color";
+import { ALL_SOURCES, type SourceKey } from "@/lib/types";
 
 interface ScoreRingProps {
   score: number;
   size?: number;
   strokeWidth?: number;
   className?: string;
+  enabledSources?: Set<SourceKey>;
 }
 
 function scoreLabel(score: number): string {
@@ -18,11 +20,29 @@ function scoreLabel(score: number): string {
   return "Cold — minimal activity detected";
 }
 
+function weightBreakdown(enabled?: Set<SourceKey>): string {
+  const configs = enabled
+    ? ALL_SOURCES.filter((s) => enabled.has(s.key))
+    : ALL_SOURCES;
+  const totalWeight = configs.reduce((sum, s) => sum + s.weight, 0);
+  const SHORT: Record<SourceKey, string> = {
+    google: "Google",
+    reddit: "Reddit",
+    hackernews: "HN",
+    wikipedia: "Wiki",
+    github: "GitHub",
+  };
+  return configs
+    .map((c) => `${SHORT[c.key]} ${Math.round((c.weight / totalWeight) * 100)}%`)
+    .join(" + ");
+}
+
 export function ScoreRing({
   score,
   size = 56,
   strokeWidth = 4,
   className = "",
+  enabledSources,
 }: ScoreRingProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const radius = (size - strokeWidth) / 2;
@@ -72,7 +92,7 @@ export function ScoreRing({
         <div className="absolute -top-2 right-0 -translate-y-full z-50 px-3 py-2 bg-text text-surface text-xs rounded-lg shadow-lg w-[210px] leading-snug pointer-events-none">
           <div className="font-semibold mb-0.5">Trend Score: {score}/100</div>
           <div className="opacity-80">{scoreLabel(score)}</div>
-          <div className="opacity-60 mt-1">Google 35% + Reddit 25% + HN 20% + Wiki 20%</div>
+          <div className="opacity-60 mt-1">{weightBreakdown(enabledSources)}</div>
           <div className="absolute right-5 top-full w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[5px] border-t-text" />
         </div>
       )}

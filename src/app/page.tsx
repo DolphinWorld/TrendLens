@@ -1,13 +1,43 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { TrendResult, TimeRange, HotWord } from "@/lib/types";
+import type { TrendResult, TimeRange, HotWord, SourceKey } from "@/lib/types";
+import { ALL_SOURCES } from "@/lib/types";
 import { SearchBar } from "@/components/search-bar";
 import { TrendCard } from "@/components/trend-card";
 import { TimeRangeSelector } from "@/components/time-range-selector";
 import { HeatMapCloud } from "@/components/heat-map-cloud";
 import { GeoSelector } from "@/components/geo-selector";
+import { SourceToggle } from "@/components/source-toggle";
 import { getGeoConfig } from "@/lib/geo-config";
+
+const SOURCES_STORAGE_KEY = "trendlens:enabledSources";
+
+function loadEnabledSources(): Set<SourceKey> {
+  if (typeof window === "undefined") return new Set(ALL_SOURCES.map((s) => s.key));
+  try {
+    const stored = localStorage.getItem(SOURCES_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as string[];
+      const valid = parsed.filter((s) =>
+        ALL_SOURCES.some((as) => as.key === s)
+      ) as SourceKey[];
+      if (valid.length > 0) return new Set(valid);
+    }
+  } catch {}
+  return new Set(ALL_SOURCES.map((s) => s.key));
+}
+
+function saveEnabledSources(sources: Set<SourceKey>) {
+  try {
+    localStorage.setItem(SOURCES_STORAGE_KEY, JSON.stringify([...sources]));
+  } catch {}
+}
+
+function sourcesQueryParam(sources: Set<SourceKey>): string {
+  if (sources.size === ALL_SOURCES.length) return "";
+  return `&sources=${[...sources].join(",")}`;
+}
 
 export default function HomePage() {
   const [results, setResults] = useState<TrendResult[]>([]);
@@ -22,12 +52,16 @@ export default function HomePage() {
   const [hotWords, setHotWords] = useState<HotWord[]>([]);
   const [hotWordsLoading, setHotWordsLoading] = useState(true);
 
+  const [enabledSources, setEnabledSources] = useState<Set<SourceKey>>(() => loadEnabledSources());
+
   const geoRef = useRef(geo);
   geoRef.current = geo;
+  const enabledSourcesRef = useRef(enabledSources);
+  enabledSourcesRef.current = enabledSources;
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const loadDiscovery = useCallback(async (r: TimeRange, g: string = geoRef.current) => {
+  const loadDiscovery = useCallback(async (r: TimeRange, g: string = geoRef.current, srcs: Set<SourceKey> = enabledSourcesRef.current) => {
     // Cancel any in-flight discovery request
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -37,7 +71,7 @@ export default function HomePage() {
     setResults([]);
     try {
       const res = await fetch(
-        `/api/trends?discover=true&stream=true&range=${r}&geo=${g}`,
+        `/api/trends?discover=true&stream=true&range=${r}&geo=${g}${sourcesQueryParam(srcs)}`,
         { signal: controller.signal }
       );
       if (!res.ok || !res.body) throw new Error("Stream failed");
@@ -112,7 +146,7 @@ export default function HomePage() {
     setLastKeyword(keyword);
     try {
       const res = await fetch(
-        `/api/trends?q=${encodeURIComponent(keyword)}&range=${range}&geo=${geo}`
+        `/api/trends?q=${encodeURIComponent(keyword)}&range=${range}&geo=${geo}${sourcesQueryParam(enabledSources)}`
       );
       const data = await res.json();
       if (data.keyword) setResults([data]);
@@ -120,6 +154,27 @@ export default function HomePage() {
       setResults([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function handleSourceChange(newSources: Set<SourceKey>) {
+    setEnabledSources(newSources);
+    saveEnabledSources(newSources);
+    if (searched && lastKeyword) {
+      setLoading(true);
+      setResults([]);
+      fetch(
+        `/api/trends?q=${encodeURIComponent(lastKeyword)}&range=${range}&geo=${geo}${sourcesQueryParam(newSources)}`
+      )
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.keyword) setResults([data]);
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    } else {
+      setResults([]);
+      loadDiscovery(range, geo, newSources);
     }
   }
 
@@ -135,7 +190,7 @@ export default function HomePage() {
     if (searched && lastKeyword) {
       setLoading(true);
       fetch(
-        `/api/trends?q=${encodeURIComponent(lastKeyword)}&range=${newRange}&geo=${geo}`
+        `/api/trends?q=${encodeURIComponent(lastKeyword)}&range=${newRange}&geo=${geo}${sourcesQueryParam(enabledSources)}`
       )
         .then((r) => r.json())
         .then((data) => {
@@ -155,7 +210,7 @@ export default function HomePage() {
     if (searched && lastKeyword) {
       setLoading(true);
       fetch(
-        `/api/trends?q=${encodeURIComponent(lastKeyword)}&range=${range}&geo=${newGeo}`
+        `/api/trends?q=${encodeURIComponent(lastKeyword)}&range=${range}&geo=${newGeo}${sourcesQueryParam(enabledSources)}`
       )
         .then((r) => r.json())
         .then((data) => {
@@ -205,10 +260,13 @@ export default function HomePage() {
         externalValue={lastKeyword ?? undefined}
       />
 
-      {/* Controls: Geo + Time Range */}
+      {/* Controls: Geo + Time Range + Sources */}
       <div className="flex justify-center mt-4 gap-3 flex-wrap">
         <GeoSelector value={geo} onChange={handleGeoChange} />
         <TimeRangeSelector value={range} onChange={handleRangeChange} />
+      </div>
+      <div className="flex justify-center mt-2">
+        <SourceToggle enabled={enabledSources} onChange={handleSourceChange} />
       </div>
 
       {/* Hot Words Heat Map */}
@@ -298,7 +356,7 @@ export default function HomePage() {
                 key={trend.keyword}
                 className="animate-fade-in"
               >
-                <TrendCard trend={trend} />
+                <TrendCard trend={trend} enabledSources={enabledSources} />
               </div>
             ))}
             {/* Placeholder skeletons for remaining cards still loading */}

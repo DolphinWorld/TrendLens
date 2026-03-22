@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllTrends, fetchDailyTrends, fetchHotWordsWithRegions, fetchMastodonTrending, fetchAllGeoHotWords } from "@/lib/fetchers";
 import { getDiscoveryTopics } from "@/lib/trending-topics";
-import type { TimeRange } from "@/lib/types";
+import type { TimeRange, SourceKey } from "@/lib/types";
+import { ALL_SOURCES } from "@/lib/types";
 
 const VALID_RANGES = new Set<string>(["1h", "6h", "1d", "7d", "30d", "90d", "12m"]);
+const VALID_SOURCES = new Set(ALL_SOURCES.map((s) => s.key));
 
 export async function GET(req: NextRequest) {
   const keyword = req.nextUrl.searchParams.get("q");
@@ -15,6 +17,11 @@ export async function GET(req: NextRequest) {
   const range: TimeRange = VALID_RANGES.has(rangeParam)
     ? (rangeParam as TimeRange)
     : "7d";
+
+  const sourcesParam = req.nextUrl.searchParams.get("sources");
+  const enabledSources: SourceKey[] | undefined = sourcesParam
+    ? (sourcesParam.split(",").filter((s) => VALID_SOURCES.has(s as SourceKey)) as SourceKey[])
+    : undefined;
 
   try {
     if (hotwords === "true") {
@@ -39,7 +46,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (keyword) {
-      const result = await fetchAllTrends(keyword, range, true, geoParam);
+      const result = await fetchAllTrends(keyword, range, true, geoParam, false, enabledSources);
       return NextResponse.json(result);
     }
 
@@ -66,7 +73,7 @@ export async function GET(req: NextRequest) {
               // Fire all topics in parallel — each streams its result as soon as it resolves
               const promises = topics.map(async (topic) => {
                 try {
-                  const result = await fetchAllTrends(topic, range, false, geoParam, true);
+                  const result = await fetchAllTrends(topic, range, false, geoParam, true, enabledSources);
                   controller.enqueue(encoder.encode(JSON.stringify(result) + "\n"));
                 } catch {
                   // skip failed topics
@@ -93,7 +100,7 @@ export async function GET(req: NextRequest) {
       // Non-streaming fallback: fetch all in parallel (still much faster than sequential)
       const results = await Promise.all(
         topics.map((topic) =>
-          fetchAllTrends(topic, range, false, geoParam, true).catch(() => null)
+          fetchAllTrends(topic, range, false, geoParam, true, enabledSources).catch(() => null)
         )
       );
       const valid = results.filter(Boolean) as Awaited<ReturnType<typeof fetchAllTrends>>[];
